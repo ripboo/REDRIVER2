@@ -1,4 +1,4 @@
-name: Build REDRIVER2 Android (ARMv8 / arm64-v8a)
+name: Build REDRIVER2 Android (ARMv8)
 
 on:
   push:
@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. جلب السورس كود مع جميع الـ Submodules
+    # 1. جلب الكود مع Submodules
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
@@ -24,37 +24,39 @@ jobs:
         distribution: 'temurin'
         java-version: '17'
 
-    # 3. تثبيت Android SDK و NDK
-    - name: Setup Android SDK & NDK
+    # 3. إعداد Android SDK و NDK
+    - name: Setup Android SDK
       uses: android-actions/setup-android@v3
 
-    - name: Install NDK
+    - name: Install Android NDK
       run: |
         sdkmanager --install "ndk;25.2.9519653"
 
-    # 4. تحميل وتثبيت Premake5
+    # 4. تثبيت Premake5
     - name: Install Premake5
       run: |
         wget https://github.com/premake/premake-core/releases/download/v5.0.0-beta2/premake-5.0.0-beta2-linux.tar.gz
         tar -xvf premake-5.0.0-beta2-linux.tar.gz
         sudo mv premake5 /usr/local/bin/
-        premake5 --version
 
-    # 5. التوليد والبناء الحصري لمعمارية ARMv8 باستخدام ndk-build
-    - name: Generate and Build ARMv8 Shared Libraries
+    # 5. إصلاح خطأ shortcommands والبناء لمعمارية ARMv8 (arm64-v8a)
+    - name: Fix Premake Script and Build ARMv8
       run: |
         cd src_rebuild
         
-        # 1. تشغيل Premake5 لتوليد ملفات Android.mk و Application.mk عبر الموديول
+        # حذف السطر الذي يحتوي على shortcommands "On" لتفادي خطأ nil value
+        sed -i '/shortcommands/d' premake5.lua
+        
+        # 1. توليد ملفات البناء المخصصة للأندرويد
         premake5 androidndk
         
-        # 2. الانتقال إلى مجلد البناء الناتج
+        # 2. الانتقال إلى مجلد البناء
         cd build
         
-        # 3. تشغيل ndk-build وتمرير APP_ABI المخصص لـ ARMv8 فقط
+        # 3. البناء الحصري لمعمارية ARMv8 (arm64-v8a)
         $ANDROID_NDK_ROOT/ndk-build APP_ABI=arm64-v8a -j$(nproc)
 
-    # 6. رفع ملفات المكتبات (.so) الخاصة بـ ARMv8
+    # 6. رفع مخرجات ARMv8 (.so)
     - name: Upload ARMv8 Artifacts
       uses: actions/upload-artifact@v4
       with:
