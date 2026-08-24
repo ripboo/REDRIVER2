@@ -1,0 +1,73 @@
+name: Build REDRIVER2 Android (ARMv8)
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  pull_request:
+    branches: [ "master", "main" ]
+
+jobs:
+  build-android-armv8:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. جلب الكود مع كافة Submodules
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    # 2. إعداد Android SDK و NDK
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+
+    # 3. تثبيت Premake5
+    - name: Install Premake5
+      run: |
+        wget https://github.com/premake/premake-core/releases/download/v5.0.0-beta2/premake-5.0.0-beta2-linux.tar.gz
+        tar -xvf premake-5.0.0-beta2-linux.tar.gz
+        sudo mv premake5 /usr/local/bin/
+
+    # 4. جلب SDL2 Headers، إصلاح معمارية 64-bit، والبناء
+    - name: Patch, Setup SDL2 & Build ARMv8
+      run: |
+        cd src_rebuild
+        
+        # جلب مكتبة SDL2 headers
+        git clone https://github.com/libsdl-org/SDL.git -b SDL2 --depth 1 temp_sdl
+        
+        # تفعيل الأندرويد وإلغاء الأوامر القديمة
+        sed -i 's/IS_ANDROID = (_ACTION == "androidndk")/IS_ANDROID = true/g' premake5.lua
+        sed -i '/shortcommands/d' premake5.lua
+        
+        # توليد ملفات Make
+        premake5 gmake2 --os=android
+        
+        cd build
+        
+        # أدوات Android NDK الخاصة بـ ARMv8 / ARM64
+        NDK_BIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
+        export CC=$NDK_BIN/aarch64-linux-android21-clang
+        export CXX=$NDK_BIN/aarch64-linux-android21-clang++
+        export AR=$NDK_BIN/llvm-ar
+        
+        # توجيه المترجم للـ SDL2 Headers + إصلاح أحجام Types لأنظمة 64-bit
+        export C_INCLUDE_PATH="$PWD/../temp_sdl/include:$C_INCLUDE_PATH"
+        export CPLUS_INCLUDE_PATH="$PWD/../temp_sdl/include:$CPLUS_INCLUDE_PATH"
+        export CFLAGS="-DPSX_LONG_IS_INT -D__ANDROID__ $CFLAGS"
+        export CXXFLAGS="-DPSX_LONG_IS_INT -D__ANDROID__ $CXXFLAGS"
+        
+        # 1. بناء PsyCross
+        make PsyCross config=release_android-arm64 -j$(nproc)
+        
+        # 2. بناء REDRIVER2
+        make REDRIVER2 config=release_android-arm64 -j$(nproc)
+
+    # 5. رفع مخرجات البناء
+    - name: Upload ARMv8 Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: REDRIVER2-Android-arm64-v8a
+        path: |
+          src_rebuild/bin/
+          src_rebuild/build/
