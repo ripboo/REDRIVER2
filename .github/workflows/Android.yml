@@ -34,41 +34,55 @@ jobs:
         tar -xvf premake-5.0.0-beta2-linux.tar.gz
         sudo mv premake5 /usr/local/bin/
 
-    # 4. معالجة وتصحيح الكود التلقائي للبناء
+    # 4. معالجة وتصحيح الكود والبناء
     - name: Patch Source Code & Build ARMv8
       run: |
         git submodule update --init --recursive
         cd src_rebuild
 
-        # --- [إصلاح تحويل المؤشرات والمكتبات الناقصة] ---
+        # إنشـاء سكريبت بايثون مستقل لتعديل الملفات بـأمان وتجنب أخطاء YAML
+        cat << 'EOF' > fix_code.py
+        import os
+
+        # 1. تعديل libgpu.h لحزم جميع الهياكل
+        gpu_path = "PsyCross/include/psx/libgpu.h"
+        if os.path.exists(gpu_path):
+            with open(gpu_path, "r") as f:
+                content = f.read()
+            content = content.replace("typedef struct {", "typedef struct __attribute__((packed)) {")
+            content = content.replace("typedef struct struct_", "typedef struct __attribute__((packed)) struct_")
+            with open(gpu_path, "w") as f:
+                f.write(content)
+
+        # 2. إضافة الترويسات لـ LIBETC.C
+        etc_path = "PsyCross/src/psx/LIBETC.C"
+        if os.path.exists(etc_path):
+            with open(etc_path, "r") as f:
+                content = f.read()
+            if "#include <stdint.h>" not in content:
+                with open(etc_path, "w") as f:
+                    f.write("#include <stdint.h>\n" + content)
+
+        # 3. إضافة الترويسات لـ LIBCD.C
+        cd_path = "PsyCross/src/psx/LIBCD.C"
+        if os.path.exists(cd_path):
+            with open(cd_path, "r") as f:
+                content = f.read()
+            if "gpu.h" not in content:
+                with open(cd_path, "w") as f:
+                    f.write("#include \"gpulib/gpu.h\"\n" + content)
+        EOF
+
+        # تشغيل سكريبت الإصلاح
+        python3 fix_code.py
+
+        # إصلاح تحويل المؤشرات في LIBETC.C
         sed -i 's/(int)vsync_callback/(uintptr_t)vsync_callback/g' PsyCross/src/psx/LIBETC.C
-        
-        # إضافة Include لتعريف uintptr_t و eprint
-        python3 -c '
-path = "PsyCross/src/psx/LIBETC.C"
-with open(path, "r") as f: content = f.read()
-if "#include <stdint.h>" not in content:
-    with open(path, "w") as f: f.write("#include <stdint.h>\n" + content)
 
-path2 = "PsyCross/src/psx/LIBCD.C"
-with open(path2, "r") as f: content2 = f.read()
-if "gpu.h" not in content2:
-    with open(path2, "w") as f: f.write("#include \"gpulib/gpu.h\"\n" + content2)
-'
-
-        # --- [تعديل struct Packing في libgpu.h عبر Python لضمان الشمولية] ---
-        python3 -c '
-path = "PsyCross/include/psx/libgpu.h"
-with open(path, "r") as f: text = f.read()
-text = text.replace("typedef struct {", "typedef struct __attribute__((packed)) {")
-text = text.replace("typedef struct struct_", "typedef struct __attribute__((packed)) struct_")
-with open(path, "w") as f: f.write(text)
-'
-
-        # --- [جلب SDL2 headers] ---
+        # جلب SDL2 headers
         git clone https://github.com/libsdl-org/SDL.git -b SDL2 --depth 1 temp_sdl
 
-        # --- [إعداد Premake] ---
+        # إعداد Premake
         sed -i 's/IS_ANDROID = (_ACTION == "androidndk")/IS_ANDROID = true/g' premake5.lua
         sed -i '/shortcommands/d' premake5.lua
         sed -i '/-mfloat-abi=softfp/d' premake5.lua
@@ -79,7 +93,7 @@ with open(path, "w") as f: f.write(text)
 
         cd build
 
-        # --- [إعداد أدوات NDK للمعمارية ARM64] ---
+        # إعداد أدوات NDK للمعمارية ARM64
         NDK_BIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
         export CC=$NDK_BIN/aarch64-linux-android21-clang
         export CXX=$NDK_BIN/aarch64-linux-android21-clang++
@@ -90,10 +104,24 @@ with open(path, "w") as f: f.write(text)
         sed -i "s|INCLUDES +=|INCLUDES += -I${SDL_ABS_PATH} -I/usr/include/SDL2|g" PsyCross.make
         sed -i "s|INCLUDES +=|INCLUDES += -I${SDL_ABS_PATH} -I/usr/include/SDL2|g" REDRIVER2.make
 
-        # [أهم خيارات لتجاوز أخطاء الحشوة والأحجام]
+        # رافعات المترجم
         FLAGS="-DPSX_LONG_IS_INT -DPSY_CROSS_LONG_IS_INT -D__ANDROID__ -fpack-struct=1 -Wno-int-to-pointer-cast -Wno-pointer-to-int-cast -Wno-implicit-function-declaration -Wno-error"
 
         sed -i "s/ALL_CFLAGS +=/ALL_CFLAGS += ${FLAGS} /g" PsyCross.make
+        sed -i "s/ALL_CFLAGS +=/ALL_CFLAGS += ${FLAGS} /g" REDRIVER2.make
+
+        # بدء عملية التجميع
+        make PsyCross config=release_android-arm64 -j$(nproc)
+        make REDRIVER2 config=release_android-arm64 -j$(nproc)
+
+    # 5. رفع الملفات الناتجة
+    - name: Upload ARMv8 Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: REDRIVER2-Android-arm64-v8a
+        path: |
+          src_rebuild/bin/
+          src_rebuild/build/
         sed -i "s/ALL_CFLAGS +=/ALL_CFLAGS += ${FLAGS} /g" REDRIVER2.make
 
         # --- [بدء البناء] ---
