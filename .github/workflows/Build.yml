@@ -17,9 +17,14 @@ jobs:
       with:
         submodules: recursive
 
-    # 2. إعداد Android SDK و NDK
-    - name: Setup Android SDK
+    # 2. إعداد Android SDK و NDK وتثبيت SDL2
+    - name: Setup Android SDK & Dependencies
       uses: android-actions/setup-android@v3
+
+    - name: Install System Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libsdl2-dev
 
     # 3. تثبيت Premake5
     - name: Install Premake5
@@ -28,7 +33,7 @@ jobs:
         tar -xvf premake-5.0.0-beta2-linux.tar.gz
         sudo mv premake5 /usr/local/bin/
 
-    # 4. تعديل الملفات وبناء مشروع ARMv8
+    # 4. تعديل الملفات وتطبيق البناء
     - name: Patch Premake Scripts & Build ARMv8
       run: |
         cd src_rebuild
@@ -36,29 +41,32 @@ jobs:
         # 1. جلب مكتبة SDL2 headers
         git clone https://github.com/libsdl-org/SDL.git -b SDL2 --depth 1 temp_sdl
         
-        # 2. تعديلات premake5.lua الرئيسي
+        # 2. تعديل premake5.lua الأساسي
         sed -i 's/IS_ANDROID = (_ACTION == "androidndk")/IS_ANDROID = true/g' premake5.lua
         sed -i '/shortcommands/d' premake5.lua
         sed -i '/-mfloat-abi=softfp/d' premake5.lua
         sed -i '/-mfpu=neon/d' premake5.lua
         sed -i 's/if os.target() ~= "emscripten" then/if os.target() ~= "emscripten" and not IS_ANDROID then/g' premake5.lua
         
-        # 3. تعديل premake5_psycross.lua مباشرة لحل مشكلة SDL2 والأحجام على ARM64
+        # 3. حقن تعاريف أحجام الـ Types لمعمارية ARM64
         sed -i '/defines { GAME_REGION }/a \    defines { "PSX_LONG_IS_INT", "__ANDROID__", "PSY_CROSS_LONG_IS_INT" }' premake5_psycross.lua
-        sed -i '/OPENAL_DIR..\/include",/a \        "temp_sdl/include",' premake5_psycross.lua
+        sed -i '/defines { VERSION }/a \    defines { "PSX_LONG_IS_INT", "__ANDROID__", "PSY_CROSS_LONG_IS_INT" }' premake5.lua
 
-        # 4. توليد ملفات البناء (gmake2)
+        # 4. توليد ملفات Make
         premake5 gmake2 --os=android
         
         cd build
         
-        # 5. إعداد أدوات Android NDK لـ ARMv8 / ARM64
+        # 5. إعداد أدوات NDK
         NDK_BIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
         export CC=$NDK_BIN/aarch64-linux-android21-clang
         export CXX=$NDK_BIN/aarch64-linux-android21-clang++
         export AR=$NDK_BIN/llvm-ar
         
-        # 6. إضافة خيارات تعطيل أخطاء تحويل Pointers في Makefile الخاطفة لـ PsyCross
+        # 6. إجبار PsyCross.make على قراءة مسارات SDL2 وحل مشاكل Pointers
+        SDL_ABS_PATH="$(pwd)/../temp_sdl/include"
+        sed -i "s|INCLUDES +=|INCLUDES += -I${SDL_ABS_PATH} -I/usr/include/SDL2|g" PsyCross.make
+        sed -i "s|INCLUDES +=|INCLUDES += -I${SDL_ABS_PATH} -I/usr/include/SDL2|g" REDRIVER2.make
         sed -i 's/ALL_CFLAGS +=/ALL_CFLAGS += -Wno-error=int-to-pointer-cast -Wno-error=pointer-to-int-cast -Wno-int-to-pointer-cast -Wno-pointer-to-int-cast -Wno-implicit-function-declaration /g' PsyCross.make
         
         # 7. التجميع
