@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. جلب الكود مع كافة Submodules
+    # 1. جلب المستودع مع الفرع الفرعية Submodules
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
@@ -28,42 +28,46 @@ jobs:
         tar -xvf premake-5.0.0-beta2-linux.tar.gz
         sudo mv premake5 /usr/local/bin/
 
-    # 4. جلب SDL2 Headers، إصلاح معمارية 64-bit، والبناء
-    - name: Patch, Setup SDL2 & Build ARMv8
+    # 4. إصلاح premake5.lua وبناء المشروع حصرياً لـ ARMv8
+    - name: Patch Premake Script & Build ARMv8
       run: |
         cd src_rebuild
         
-        # جلب مكتبة SDL2 headers
+        # 1. استنساخ SDL2 Headers
         git clone https://github.com/libsdl-org/SDL.git -b SDL2 --depth 1 temp_sdl
         
-        # تفعيل الأندرويد وإلغاء الأوامر القديمة
+        # 2. تفعيل وضع الأندرويد وحذف الأوامر المتقادمة وخيارات ARM32 غير المتوافقة مع ARM64
         sed -i 's/IS_ANDROID = (_ACTION == "androidndk")/IS_ANDROID = true/g' premake5.lua
         sed -i '/shortcommands/d' premake5.lua
+        sed -i '/-mfloat-abi=softfp/d' premake5.lua
+        sed -i '/-mfpu=neon/d' premake5.lua
         
-        # توليد ملفات Make
+        # 3. تعطيل بناء FontTool عند تفعيل وضع الأندرويد لتجنب أخطاء تجميع الأدوات
+        sed -i 's/if os.target() ~= "emscripten" then/if os.target() ~= "emscripten" and not IS_ANDROID then/g' premake5.lua
+        
+        # 4. إضافة التعريفات اللازمة لمعالجة أحجام Types على منصة 64-bit
+        sed -i '/defines { VERSION }/a \    defines { "PSX_LONG_IS_INT", "__ANDROID__" }' premake5.lua
+
+        # 5. توليد ملفات البناء
         premake5 gmake2 --os=android
         
         cd build
         
-        # أدوات Android NDK الخاصة بـ ARMv8 / ARM64
+        # 6. تعيين مسارات أدوات Android NDK الخاصة بـ ARMv8 / ARM64 (aarch64)
         NDK_BIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
         export CC=$NDK_BIN/aarch64-linux-android21-clang
         export CXX=$NDK_BIN/aarch64-linux-android21-clang++
         export AR=$NDK_BIN/llvm-ar
         
-        # توجيه المترجم للـ SDL2 Headers + إصلاح أحجام Types لأنظمة 64-bit
+        # 7. توجيه المترجم لملفات SDL2 Headers
         export C_INCLUDE_PATH="$PWD/../temp_sdl/include:$C_INCLUDE_PATH"
         export CPLUS_INCLUDE_PATH="$PWD/../temp_sdl/include:$CPLUS_INCLUDE_PATH"
-        export CFLAGS="-DPSX_LONG_IS_INT -D__ANDROID__ $CFLAGS"
-        export CXXFLAGS="-DPSX_LONG_IS_INT -D__ANDROID__ $CXXFLAGS"
         
-        # 1. بناء PsyCross
+        # 8. تنفيذ البناء لـ PsyCross و REDRIVER2 بالترتيب
         make PsyCross config=release_android-arm64 -j$(nproc)
-        
-        # 2. بناء REDRIVER2
         make REDRIVER2 config=release_android-arm64 -j$(nproc)
 
-    # 5. رفع مخرجات البناء
+    # 5. رفع نتائج البناء كـ Artifacts
     - name: Upload ARMv8 Artifacts
       uses: actions/upload-artifact@v4
       with:
