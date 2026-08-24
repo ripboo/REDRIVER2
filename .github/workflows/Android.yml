@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. جلب الكود مع كافة الـ Submodules
+    # 1. جلب الكود مع Submodules
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
@@ -32,30 +32,38 @@ jobs:
       run: |
         sdkmanager --install "ndk;25.2.9519653"
 
-    # 4. تحميل وتثبيت Premake5
+    # 4. تثبيت Premake5
     - name: Install Premake5
       run: |
         wget https://github.com/premake/premake-core/releases/download/v5.0.0-beta2/premake-5.0.0-beta2-linux.tar.gz
         tar -xvf premake-5.0.0-beta2-linux.tar.gz
         sudo mv premake5 /usr/local/bin/
-        premake5 --version
 
-    # 5. توليد ملفات البناء بتمريـر مسار premake5.lua الصحيح
-    - name: Generate Android Build Files
-      run: premake5 gmake2 --file=src_rebuild/premake5.lua --os=android
-
-    # 6. تنفيذ البناء داخل مجلد build
-    - name: Build Android Libraries
+    # 5. التوليد والبناء من داخل مجلد src_rebuild
+    - name: Build Android via NDK
       run: |
-        cd build
-        make config=release_android-arm64 -j$(nproc) || make config=release -j$(nproc)
+        cd src_rebuild
+        
+        # إنشاء ملفات البناء بواسطة Premake5 (عبر خيار gmake2 المخصص)
+        premake5 gmake2 --os=android
+        
+        # التحقق من مكان مجلد البناء الناتج والدخول إليه
+        if [ -d "build" ]; then
+          cd build
+        elif [ -d "../build" ]; then
+          cd ../build
+        fi
+        
+        # تنفيذ عملية التجميع باستخدام Android NDK Toolchain
+        $ANDROID_NDK_ROOT/ndk-build -j$(nproc) NDK_PROJECT_PATH=. APP_BUILD_SCRIPT=Android.mk || make -j$(nproc)
 
-    # 7. رفع المخرجات
+    # 6. رفع المخرجات والملفات الناتجة
     - name: Upload Android Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: REDRIVER2-Android-Build
         path: |
+          src_rebuild/bin/
+          src_rebuild/libs/
+          src_rebuild/obj/
           bin/
-          libs/
-          obj/
