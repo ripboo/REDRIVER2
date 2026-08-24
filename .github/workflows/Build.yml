@@ -11,13 +11,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. جلب المستودع مع الموديلات الفرعية
+    # 1. جلب المستودع والموديلات الفرعية
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
         submodules: recursive
 
-    # 2. إعداد بيئة أندرويد
+    # 2. إعداد بيئة Android SDK والاعتماديات
     - name: Setup Android SDK & Dependencies
       uses: android-actions/setup-android@v3
 
@@ -33,49 +33,59 @@ jobs:
         tar -xvf premake-5.0.0-beta2-linux.tar.gz
         sudo mv premake5 /usr/local/bin/
 
-    # 4. تعديل الإعدادات والبناء
-    - name: Patch Premake Scripts & Build ARMv8
+    # 4. إصلاح الكود المصدري (Patch Source Code) وتجميع المشروع
+    - name: Patch Source Code & Build ARMv8
       run: |
         cd src_rebuild
-        
-        # جلب مكتبة SDL2 headers
+
+        # --- [1. تعديل الكود المصدري للمشروع ليتوافق مع ARM64] ---
+
+        # إدراج ترويسة الطباعة والتسجيل في LIBCD.C لمنع خطأ eprintwarn
+        sed -i '1i #include "gpulib/gpu.h"' PsyCross/src/psx/LIBCD.C
+        sed -i '1i #include <stdint.h>' PsyCross/src/psx/LIBETC.C
+
+        # إصلاح التحويل من Pointer إلى Integer في LIBETC.C لتوافق 64-bit
+        sed -i 's/(int)vsync_callback/(uintptr_t)vsync_callback/g' PsyCross/src/psx/LIBETC.C
+
+        # إجبار إدراج __attribute__((packed)) للهياكل في libgpu.h
+        sed -i 's/typedef struct/typedef struct __attribute__((packed))/g' PsyCross/include/psx/libgpu.h
+
+        # --- [2. جلب وتحديث SDL2] ---
         git clone https://github.com/libsdl-org/SDL.git -b SDL2 --depth 1 temp_sdl
-        
-        # تعديل premake5.lua الأساسي للأندرويد
+
+        # --- [3. ضبط Premake وتوليد ملفات Make] ---
         sed -i 's/IS_ANDROID = (_ACTION == "androidndk")/IS_ANDROID = true/g' premake5.lua
         sed -i '/shortcommands/d' premake5.lua
         sed -i '/-mfloat-abi=softfp/d' premake5.lua
         sed -i '/-mfpu=neon/d' premake5.lua
         sed -i 's/if os.target() ~= "emscripten" then/if os.target() ~= "emscripten" and not IS_ANDROID then/g' premake5.lua
 
-        # توليد ملفات Make
         premake5 gmake2 --os=android
-        
+
         cd build
-        
-        # إعداد أدوات NDK
+
+        # --- [4. ضبط أدوات NDK للمعمارية ARM64] ---
         NDK_BIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
         export CC=$NDK_BIN/aarch64-linux-android21-clang
         export CXX=$NDK_BIN/aarch64-linux-android21-clang++
         export AR=$NDK_BIN/llvm-ar
-        
+
         SDL_ABS_PATH="$(pwd)/../temp_sdl/include"
-        
-        # إضافة المسارات
+
+        # إدراج المسارات والتعريفات المناسبة
         sed -i "s|INCLUDES +=|INCLUDES += -I${SDL_ABS_PATH} -I/usr/include/SDL2|g" PsyCross.make
         sed -i "s|INCLUDES +=|INCLUDES += -I${SDL_ABS_PATH} -I/usr/include/SDL2|g" REDRIVER2.make
-        
-        # [التعديل الأهم]: إضافة خيارات Packing ومنع المحاذاة الصارمة لحجم الهياكل
-        FLAGS="-DPSX_LONG_IS_INT -DPSY_CROSS_LONG_IS_INT -D__ANDROID__ -fpack-struct=4 -Wno-error=int-to-pointer-cast -Wno-error=pointer-to-int-cast -Wno-int-to-pointer-cast -Wno-pointer-to-int-cast -Wno-implicit-function-declaration"
-        
+
+        FLAGS="-DPSX_LONG_IS_INT -DPSY_CROSS_LONG_IS_INT -D__ANDROID__ -Wno-int-to-pointer-cast -Wno-pointer-to-int-cast -Wno-implicit-function-declaration -Wno-error"
+
         sed -i "s/ALL_CFLAGS +=/ALL_CFLAGS += ${FLAGS} /g" PsyCross.make
         sed -i "s/ALL_CFLAGS +=/ALL_CFLAGS += ${FLAGS} /g" REDRIVER2.make
-        
-        # بدء عملية التجميع
+
+        # --- [5. البناء] ---
         make PsyCross config=release_android-arm64 -j$(nproc)
         make REDRIVER2 config=release_android-arm64 -j$(nproc)
 
-    # 5. رفع النواتج
+    # 5. رفع الملفات الناتجة
     - name: Upload ARMv8 Artifacts
       uses: actions/upload-artifact@v4
       with:
