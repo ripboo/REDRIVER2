@@ -11,20 +11,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. جلب الكود مع Submodules
+    # 1. جلب الكود مع كافة الـ Submodules
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
         submodules: recursive
 
-    # 2. إعداد بيئة Java
-    - name: Setup Java JDK
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'temurin'
-        java-version: '17'
-
-    # 3. إعداد Android SDK و NDK
+    # 2. إعداد Android SDK و NDK
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
 
@@ -32,36 +25,41 @@ jobs:
       run: |
         sdkmanager --install "ndk;25.2.9519653"
 
-    # 4. تثبيت Premake5
+    # 3. تثبيت Premake5
     - name: Install Premake5
       run: |
         wget https://github.com/premake/premake-core/releases/download/v5.0.0-beta2/premake-5.0.0-beta2-linux.tar.gz
         tar -xvf premake-5.0.0-beta2-linux.tar.gz
         sudo mv premake5 /usr/local/bin/
 
-    # 5. إصلاح خطأ shortcommands والبناء لمعمارية ARMv8 (arm64-v8a)
-    - name: Fix Premake Script and Build ARMv8
+    # 4. إصلاح ملف premake5.lua والتجميع الحصري لمعمارية ARMv8
+    - name: Patch Premake Script & Build ARMv8
       run: |
         cd src_rebuild
         
-        # حذف السطر الذي يحتوي على shortcommands "On" لتفادي خطأ nil value
+        # تفعيل وضع الأندرويد تلقائياً وحذف السطر الملغى shortcommands
+        sed -i 's/IS_ANDROID = (_ACTION == "androidndk")/IS_ANDROID = true/g' premake5.lua
         sed -i '/shortcommands/d' premake5.lua
         
-        # 1. توليد ملفات البناء المخصصة للأندرويد
-        premake5 androidndk
+        # توليد ملفات البناء
+        premake5 gmake2 --os=android
         
-        # 2. الانتقال إلى مجلد البناء
         cd build
         
-        # 3. البناء الحصري لمعمارية ARMv8 (arm64-v8a)
-        $ANDROID_NDK_ROOT/ndk-build APP_ABI=arm64-v8a -j$(nproc)
+        # تعيين أدوات Android NDK الخاصة بـ ARMv8 (aarch64 / ARM64)
+        NDK_BIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
+        export CC=$NDK_BIN/aarch64-linux-android21-clang
+        export CXX=$NDK_BIN/aarch64-linux-android21-clang++
+        export AR=$NDK_BIN/llvm-ar
+        
+        # تجميع المشروع فقط مخصصاً للإنتاج (Release)
+        make REDRIVER2 config=release -j$(nproc)
 
-    # 6. رفع مخرجات ARMv8 (.so)
+    # 5. رفع مخرجات ARMv8 الجاهزة
     - name: Upload ARMv8 Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: REDRIVER2-Android-arm64-v8a
+        name: REDRIVER2-Android-ARMv8
         path: |
-          src_rebuild/libs/arm64-v8a/
-          src_rebuild/build/libs/arm64-v8a/
-          src_rebuild/obj/local/arm64-v8a/
+          src_rebuild/bin/
+          src_rebuild/build/
