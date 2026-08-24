@@ -1,4 +1,4 @@
-name: Build REDRIVER2 Android (ARMv8)
+name: Build REDRIVER2 Android ARMv8
 
 on:
   push:
@@ -11,128 +11,96 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. جلب المستودع والموديلات الفرعية بالكامل
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
-        fetch-depth: 0
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
 
-    # 2. إعداد بيئة Android SDK
-    - name: Setup Android SDK & Dependencies
-      uses: android-actions/setup-android@v3
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
-    - name: Install System Dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libsdl2-dev
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsdl2-dev
 
-    # 3. تثبيت Premake5
-    - name: Install Premake5
-      run: |
-        wget https://github.com/premake/premake-core/releases/download/v5.0.0-beta2/premake-5.0.0-beta2-linux.tar.gz
-        tar -xvf premake-5.0.0-beta2-linux.tar.gz
-        sudo mv premake5 /usr/local/bin/
+      - name: Install Premake5
+        run: |
+          wget https://github.com/premake/premake-core/releases/download/v5.0.0-beta2/premake-5.0.0-beta2-linux.tar.gz
+          tar -xvf premake-5.0.0-beta2-linux.tar.gz
+          sudo mv premake5 /usr/local/bin/
 
-    # 4. معالجة وتصحيح الكود والبناء
-    - name: Patch Source Code & Build ARMv8
-      run: |
-        git submodule update --init --recursive
-        cd src_rebuild
+      - name: Patch Source Code and Build
+        run: |
+          git submodule update --init --recursive
+          cd src_rebuild
 
-        # إنشـاء سكريبت بايثون مستقل لتعديل الملفات بـأمان وتجنب أخطاء YAML
-        cat << 'EOF' > fix_code.py
-        import os
+          python3 -c '
+          import os
 
-        # 1. تعديل libgpu.h لحزم جميع الهياكل
-        gpu_path = "PsyCross/include/psx/libgpu.h"
-        if os.path.exists(gpu_path):
-            with open(gpu_path, "r") as f:
-                content = f.read()
-            content = content.replace("typedef struct {", "typedef struct __attribute__((packed)) {")
-            content = content.replace("typedef struct struct_", "typedef struct __attribute__((packed)) struct_")
-            with open(gpu_path, "w") as f:
-                f.write(content)
+          gpu_path = "PsyCross/include/psx/libgpu.h"
+          if os.path.exists(gpu_path):
+              with open(gpu_path, "r") as f:
+                  content = f.read()
+              content = content.replace("typedef struct {", "typedef struct __attribute__((packed)) {")
+              content = content.replace("typedef struct struct_", "typedef struct __attribute__((packed)) struct_")
+              with open(gpu_path, "w") as f:
+                  f.write(content)
 
-        # 2. إضافة الترويسات لـ LIBETC.C
-        etc_path = "PsyCross/src/psx/LIBETC.C"
-        if os.path.exists(etc_path):
-            with open(etc_path, "r") as f:
-                content = f.read()
-            if "#include <stdint.h>" not in content:
-                with open(etc_path, "w") as f:
-                    f.write("#include <stdint.h>\n" + content)
+          etc_path = "PsyCross/src/psx/LIBETC.C"
+          if os.path.exists(etc_path):
+              with open(etc_path, "r") as f:
+                  content = f.read()
+              if "#include <stdint.h>" not in content:
+                  with open(etc_path, "w") as f:
+                      f.write("#include <stdint.h>\n" + content)
 
-        # 3. إضافة الترويسات لـ LIBCD.C
-        cd_path = "PsyCross/src/psx/LIBCD.C"
-        if os.path.exists(cd_path):
-            with open(cd_path, "r") as f:
-                content = f.read()
-            if "gpu.h" not in content:
-                with open(cd_path, "w") as f:
-                    f.write("#include \"gpulib/gpu.h\"\n" + content)
-        EOF
+          cd_path = "PsyCross/src/psx/LIBCD.C"
+          if os.path.exists(cd_path):
+              with open(cd_path, "r") as f:
+                  content = f.read()
+              if "gpu.h" not in content:
+                  with open(cd_path, "w") as f:
+                      f.write("#include \"gpulib/gpu.h\"\n" + content)
+          '
 
-        # تشغيل سكريبت الإصلاح
-        python3 fix_code.py
+          sed -i 's/(int)vsync_callback/(uintptr_t)vsync_callback/g' PsyCross/src/psx/LIBETC.C
 
-        # إصلاح تحويل المؤشرات في LIBETC.C
-        sed -i 's/(int)vsync_callback/(uintptr_t)vsync_callback/g' PsyCross/src/psx/LIBETC.C
+          git clone https://github.com/libsdl-org/SDL.git -b SDL2 --depth 1 temp_sdl
 
-        # جلب SDL2 headers
-        git clone https://github.com/libsdl-org/SDL.git -b SDL2 --depth 1 temp_sdl
+          sed -i 's/IS_ANDROID = (_ACTION == "androidndk")/IS_ANDROID = true/g' premake5.lua
+          sed -i '/shortcommands/d' premake5.lua
+          sed -i '/-mfloat-abi=softfp/d' premake5.lua
+          sed -i '/-mfpu=neon/d' premake5.lua
+          sed -i 's/if os.target() ~= "emscripten" then/if os.target() ~= "emscripten" and not IS_ANDROID then/g' premake5.lua
 
-        # إعداد Premake
-        sed -i 's/IS_ANDROID = (_ACTION == "androidndk")/IS_ANDROID = true/g' premake5.lua
-        sed -i '/shortcommands/d' premake5.lua
-        sed -i '/-mfloat-abi=softfp/d' premake5.lua
-        sed -i '/-mfpu=neon/d' premake5.lua
-        sed -i 's/if os.target() ~= "emscripten" then/if os.target() ~= "emscripten" and not IS_ANDROID then/g' premake5.lua
+          premake5 gmake2 --os=android
 
-        premake5 gmake2 --os=android
+          cd build
 
-        cd build
+          NDK_BIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
+          export CC=$NDK_BIN/aarch64-linux-android21-clang
+          export CXX=$NDK_BIN/aarch64-linux-android21-clang++
+          export AR=$NDK_BIN/llvm-ar
 
-        # إعداد أدوات NDK للمعمارية ARM64
-        NDK_BIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
-        export CC=$NDK_BIN/aarch64-linux-android21-clang
-        export CXX=$NDK_BIN/aarch64-linux-android21-clang++
-        export AR=$NDK_BIN/llvm-ar
+          SDL_ABS_PATH="$(pwd)/../temp_sdl/include"
 
-        SDL_ABS_PATH="$(pwd)/../temp_sdl/include"
+          sed -i "s|INCLUDES +=|INCLUDES += -I${SDL_ABS_PATH} -I/usr/include/SDL2|g" PsyCross.make
+          sed -i "s|INCLUDES +=|INCLUDES += -I${SDL_ABS_PATH} -I/usr/include/SDL2|g" REDRIVER2.make
 
-        sed -i "s|INCLUDES +=|INCLUDES += -I${SDL_ABS_PATH} -I/usr/include/SDL2|g" PsyCross.make
-        sed -i "s|INCLUDES +=|INCLUDES += -I${SDL_ABS_PATH} -I/usr/include/SDL2|g" REDRIVER2.make
+          FLAGS="-DPSX_LONG_IS_INT -DPSY_CROSS_LONG_IS_INT -D__ANDROID__ -fpack-struct=1 -Wno-int-to-pointer-cast -Wno-pointer-to-int-cast -Wno-implicit-function-declaration -Wno-error"
 
-        # رافعات المترجم
-        FLAGS="-DPSX_LONG_IS_INT -DPSY_CROSS_LONG_IS_INT -D__ANDROID__ -fpack-struct=1 -Wno-int-to-pointer-cast -Wno-pointer-to-int-cast -Wno-implicit-function-declaration -Wno-error"
+          sed -i "s/ALL_CFLAGS +=/ALL_CFLAGS += ${FLAGS} /g" PsyCross.make
+          sed -i "s/ALL_CFLAGS +=/ALL_CFLAGS += ${FLAGS} /g" REDRIVER2.make
 
-        sed -i "s/ALL_CFLAGS +=/ALL_CFLAGS += ${FLAGS} /g" PsyCross.make
-        sed -i "s/ALL_CFLAGS +=/ALL_CFLAGS += ${FLAGS} /g" REDRIVER2.make
+          make PsyCross config=release_android-arm64 -j$(nproc)
+          make REDRIVER2 config=release_android-arm64 -j$(nproc)
 
-        # بدء عملية التجميع
-        make PsyCross config=release_android-arm64 -j$(nproc)
-        make REDRIVER2 config=release_android-arm64 -j$(nproc)
-
-    # 5. رفع الملفات الناتجة
-    - name: Upload ARMv8 Artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: REDRIVER2-Android-arm64-v8a
-        path: |
-          src_rebuild/bin/
-          src_rebuild/build/
-        sed -i "s/ALL_CFLAGS +=/ALL_CFLAGS += ${FLAGS} /g" REDRIVER2.make
-
-        # --- [بدء البناء] ---
-        make PsyCross config=release_android-arm64 -j$(nproc)
-        make REDRIVER2 config=release_android-arm64 -j$(nproc)
-
-    # 5. رفع الملفات الناتجة
-    - name: Upload ARMv8 Artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: REDRIVER2-Android-arm64-v8a
-        path: |
-          src_rebuild/bin/
-          src_rebuild/build/
+      - name: Upload ARMv8 Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: REDRIVER2-Android-arm64-v8a
+          path: |
+            src_rebuild/bin/
+            src_rebuild/build/
