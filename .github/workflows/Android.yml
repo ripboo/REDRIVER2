@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. جلب الكود مع Submodules
+    # 1. جلب الكود مع كافة Submodules
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
@@ -32,26 +32,29 @@ jobs:
         tar -xvf premake-5.0.0-beta2-linux.tar.gz
         sudo mv premake5 /usr/local/bin/
 
-    # 4. التوليد والبناء الحصري لمعمارية ARMv8 / ARM64
+    # 4. التوليد والبناء الحصري لمعمارية ARMv8 (arm64)
     - name: Build ARMv8 Binary
       run: |
         cd src_rebuild
         
-        # توليد ملفات Make
+        # استخدام gmake2 وتحديد البيئة
         premake5 gmake2 --os=android
         
         cd build
         
-        # تحديد مسارات أدوات البناء الخاصة بـ ARM64 (ARMv8)
+        # تعيين أدوات مترجم Android NDK الخاصة بـ ARMv8 (aarch64)
         NDK_BIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
         export CC=$NDK_BIN/aarch64-linux-android21-clang
         export CXX=$NDK_BIN/aarch64-linux-android21-clang++
         export AR=$NDK_BIN/llvm-ar
         
-        # بدء عملية البناء
-        make config=release_android-arm64 -j$(nproc) || make config=release -j$(nproc)
+        # عرض أسماء الـ Configurations المتاحة للتأكد
+        make help
+        
+        # البناء باستخدام Configuration المسمى 'release' المتوافق مع Premake
+        make config=release -j$(nproc)
 
-    # 5. رفع مخرجات ARMv8
+    # 5. رفع مخرجات البناء
     - name: Upload ARMv8 Artifacts
       uses: actions/upload-artifact@v4
       with:
