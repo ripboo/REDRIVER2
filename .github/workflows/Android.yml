@@ -25,31 +25,31 @@ jobs:
         java-version: '17'
 
     # 3. إعداد Android SDK و NDK
-    - name: Setup Android SDK & NDK
+    - name: Setup Android SDK
       uses: android-actions/setup-android@v3
 
     - name: Install Android NDK
       run: |
         sdkmanager --install "ndk;25.2.9519653"
 
-    # 4. تثبيت Premake5
-    - name: Setup Premake
-      uses: abel2333/setup-premake@v1
-      with:
-        version: '5.0.0-beta2'
+    # 4. تحميل وتثبيت Premake5 مباشرة
+    - name: Install Premake5
+      run: |
+        wget https://github.com/premake/premake-core/releases/download/v5.0.0-beta2/premake-5.0.0-beta2-linux.tar.gz
+        tar -xvf premake-5.0.0-beta2-linux.tar.gz
+        sudo mv premake5 /usr/local/bin/
+        premake5 --version
 
     # 5. توليد ملفات البناء الخاصة بالـ Android NDK
     - name: Generate Android Build Files
       run: premake5 androidndk
 
     # 6. بناء المشروع باستخدام NDK-Build
-    - name: Build Android Libraries
-      env:
-        ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+    - name: Build Android
       run: |
-        $ANDROID_NDK_ROOT/ndk-build -C build
+        $ANDROID_NDK_HOME/ndk-build -C build
 
-    # 7. رفع المخرجات الجاهزة (ملفات .so / .apk)
+    # 7. رفع المخرجات الجاهزة
     - name: Upload Android Artifacts
       uses: actions/upload-artifact@v4
       with:
