@@ -17,7 +17,7 @@ jobs:
       with:
         submodules: recursive
 
-    # 2. إعداد بيئة Java المعتمدة لبناء الأندرويد
+    # 2. إعداد بيئة Java
     - name: Setup Java JDK
       uses: actions/setup-java@v4
       with:
@@ -32,7 +32,7 @@ jobs:
       run: |
         sdkmanager --install "ndk;25.2.9519653"
 
-    # 4. تحميل وتثبيت Premake5 مباشرة
+    # 4. تحميل وتثبيت Premake5
     - name: Install Premake5
       run: |
         wget https://github.com/premake/premake-core/releases/download/v5.0.0-beta2/premake-5.0.0-beta2-linux.tar.gz
@@ -40,16 +40,17 @@ jobs:
         sudo mv premake5 /usr/local/bin/
         premake5 --version
 
-    # 5. توليد ملفات البناء الخاصة بالـ Android NDK
+    # 5. توليد ملفات البناء لنظام الأندرويد
     - name: Generate Android Build Files
-      run: premake5 androidndk
+      run: premake5 gmake2 --os=android
 
-    # 6. بناء المشروع باستخدام NDK-Build
-    - name: Build Android
+    # 6. بناء المشروع باستخدام NDK Clang
+    - name: Build Android Libraries
       run: |
-        $ANDROID_NDK_HOME/ndk-build -C build
+        cd build
+        make config=release_android-arm64 -j$(nproc) || make config=release -j$(nproc)
 
-    # 7. رفع المخرجات الجاهزة
+    # 7. رفع المخرجات
     - name: Upload Android Artifacts
       uses: actions/upload-artifact@v4
       with:
