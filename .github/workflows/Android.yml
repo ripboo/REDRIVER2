@@ -11,15 +11,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. جلب الكود مع كافة Submodules
+    # 1. جلب المستودع مع جلب المجلدات الفرعية (Submodules) بشكل كامل
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
         submodules: recursive
+        fetch-depth: 0
 
-    # 2. إعداد Android SDK و NDK
-    - name: Setup Android SDK
+    # 2. إعداد بيئة Android SDK
+    - name: Setup Android SDK & Dependencies
       uses: android-actions/setup-android@v3
+
+    - name: Install System Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libsdl2-dev
 
     # 3. تثبيت Premake5
     - name: Install Premake5
@@ -28,42 +34,61 @@ jobs:
         tar -xvf premake-5.0.0-beta2-linux.tar.gz
         sudo mv premake5 /usr/local/bin/
 
-    # 4. جلب SDL2 Headers، إصلاح معمارية 64-bit، والبناء
-    - name: Patch, Setup SDL2 & Build ARMv8
+    # 4. التحقق من مجلد PsyCross وتطبيق الإصلاحات والبناء
+    - name: Ensure PsyCross & Build ARMv8
       run: |
+        # التأكد من تحديث وجلب المجلد الفرعي PsyCross إذا كان فارغاً
+        git submodule update --init --recursive
+        
         cd src_rebuild
-        
-        # جلب مكتبة SDL2 headers
+
+        # --- [إصلاحات كود PsyCross ليتوافق مع ARM64] ---
+        # إضافة الترويسات الناقصة
+        sed -i '1i #include "gpulib/gpu.h"' PsyCross/src/psx/LIBCD.C
+        sed -i '1i #include <stdint.h>' PsyCross/src/psx/LIBETC.C
+
+        # تصحيح تحويل المؤشرات في LIBETC.C لتوافق 64-bit
+        sed -i 's/(int)vsync_callback/(uintptr_t)vsync_callback/g' PsyCross/src/psx/LIBETC.C
+
+        # ضبط حزم الهياكل (Structures Packing) لتتطابق مع توقعات PSX وتتجاوز أخطاء static_assert
+        sed -i 's/typedef struct/typedef struct __attribute__((packed))/g' PsyCross/include/psx/libgpu.h
+
+        # --- جلب SDL2 headers ---
         git clone https://github.com/libsdl-org/SDL.git -b SDL2 --depth 1 temp_sdl
-        
-        # تفعيل الأندرويد وإلغاء الأوامر القديمة
+
+        # --- إعداد Premake ---
         sed -i 's/IS_ANDROID = (_ACTION == "androidndk")/IS_ANDROID = true/g' premake5.lua
         sed -i '/shortcommands/d' premake5.lua
-        
-        # توليد ملفات Make
+        sed -i '/-mfloat-abi=softfp/d' premake5.lua
+        sed -i '/-mfpu=neon/d' premake5.lua
+        sed -i 's/if os.target() ~= "emscripten" then/if os.target() ~= "emscripten" and not IS_ANDROID then/g' premake5.lua
+
         premake5 gmake2 --os=android
-        
+
         cd build
-        
-        # أدوات Android NDK الخاصة بـ ARMv8 / ARM64
+
+        # --- إعداد بيئة NDK ---
         NDK_BIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
         export CC=$NDK_BIN/aarch64-linux-android21-clang
         export CXX=$NDK_BIN/aarch64-linux-android21-clang++
         export AR=$NDK_BIN/llvm-ar
-        
-        # توجيه المترجم للـ SDL2 Headers + إصلاح أحجام Types لأنظمة 64-bit
-        export C_INCLUDE_PATH="$PWD/../temp_sdl/include:$C_INCLUDE_PATH"
-        export CPLUS_INCLUDE_PATH="$PWD/../temp_sdl/include:$CPLUS_INCLUDE_PATH"
-        export CFLAGS="-DPSX_LONG_IS_INT -D__ANDROID__ $CFLAGS"
-        export CXXFLAGS="-DPSX_LONG_IS_INT -D__ANDROID__ $CXXFLAGS"
-        
-        # 1. بناء PsyCross
+
+        SDL_ABS_PATH="$(pwd)/../temp_sdl/include"
+
+        # حقن المسارات والرافعات البرمجية
+        sed -i "s|INCLUDES +=|INCLUDES += -I${SDL_ABS_PATH} -I/usr/include/SDL2|g" PsyCross.make
+        sed -i "s|INCLUDES +=|INCLUDES += -I${SDL_ABS_PATH} -I/usr/include/SDL2|g" REDRIVER2.make
+
+        FLAGS="-DPSX_LONG_IS_INT -DPSY_CROSS_LONG_IS_INT -D__ANDROID__ -Wno-int-to-pointer-cast -Wno-pointer-to-int-cast -Wno-implicit-function-declaration -Wno-error"
+
+        sed -i "s/ALL_CFLAGS +=/ALL_CFLAGS += ${FLAGS} /g" PsyCross.make
+        sed -i "s/ALL_CFLAGS +=/ALL_CFLAGS += ${FLAGS} /g" REDRIVER2.make
+
+        # --- تنفيذ البناء ---
         make PsyCross config=release_android-arm64 -j$(nproc)
-        
-        # 2. بناء REDRIVER2
         make REDRIVER2 config=release_android-arm64 -j$(nproc)
 
-    # 5. رفع مخرجات البناء
+    # 5. رفع النواتج
     - name: Upload ARMv8 Artifacts
       uses: actions/upload-artifact@v4
       with:
