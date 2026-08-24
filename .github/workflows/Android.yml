@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. جلب الكود مع كافة الـ Submodules
+    # 1. جلب الكود مع كافة Submodules
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
@@ -32,12 +32,12 @@ jobs:
         tar -xvf premake-5.0.0-beta2-linux.tar.gz
         sudo mv premake5 /usr/local/bin/
 
-    # 4. إصلاح ملف premake5.lua والتجميع الحصري لمعمارية ARMv8
+    # 4. التعديل والبناء بالربط مع اسم Platform الصحيح (android-arm64)
     - name: Patch Premake Script & Build ARMv8
       run: |
         cd src_rebuild
         
-        # تفعيل وضع الأندرويد تلقائياً وحذف السطر الملغى shortcommands
+        # تفعيل وضع الأندرويد وحذف الأوامر الملغاة
         sed -i 's/IS_ANDROID = (_ACTION == "androidndk")/IS_ANDROID = true/g' premake5.lua
         sed -i '/shortcommands/d' premake5.lua
         
@@ -46,20 +46,23 @@ jobs:
         
         cd build
         
-        # تعيين أدوات Android NDK الخاصة بـ ARMv8 (aarch64 / ARM64)
+        # تعيين أدوات Android NDK الخاص بـ ARMv8 (64-bit)
         NDK_BIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
         export CC=$NDK_BIN/aarch64-linux-android21-clang
         export CXX=$NDK_BIN/aarch64-linux-android21-clang++
         export AR=$NDK_BIN/llvm-ar
         
-        # تجميع المشروع فقط مخصصاً للإنتاج (Release)
-        make REDRIVER2 config=release -j$(nproc)
+        # 1. تجميع مكتبة PsyCross أولاً بتهيئة ARM64
+        make PsyCross config=release_android-arm64 -j$(nproc)
+        
+        # 2. تجميع تطبيق REDRIVER2 الأساسي بتهيئة ARM64
+        make REDRIVER2 config=release_android-arm64 -j$(nproc)
 
-    # 5. رفع مخرجات ARMv8 الجاهزة
+    # 5. رفع مخرجات التجميع
     - name: Upload ARMv8 Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: REDRIVER2-Android-ARMv8
+        name: REDRIVER2-Android-arm64-v8a
         path: |
           src_rebuild/bin/
           src_rebuild/build/
