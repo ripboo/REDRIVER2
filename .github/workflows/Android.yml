@@ -36,7 +36,7 @@ jobs:
           git submodule update --init --recursive
           cd src_rebuild
 
-          # إصلاح الترويسات ومحاذاة المؤشرات والبيانات وحذف فحوصات static_assert المعطلة لـ ARM64
+          # إصلاح الترويسات وإلغاء فحوصات static_assert المعطلة لـ ARM64
           python3 -c '
           import os, re
 
@@ -44,7 +44,6 @@ jobs:
           if os.path.exists(gpu_path):
               with open(gpu_path, "r") as f:
                   content = f.read()
-              # تعطيل جميع أسطر static_assert التي تسبب الفشل في 64-bit
               content = re.sub(r"static_assert\(sizeof\(.*?\);", "// static_assert disabled for arm64", content)
               content = content.replace("typedef struct {", "typedef struct __attribute__((packed)) {")
               content = content.replace("typedef struct struct_", "typedef struct __attribute__((packed)) struct_")
@@ -63,9 +62,9 @@ jobs:
           if os.path.exists(cd_path):
               with open(cd_path, "r") as f:
                   content = f.read()
-              if "gpu.h" not in content:
+              if "psx/libgpu.h" not in content:
                   with open(cd_path, "w") as f:
-                      f.write("#include \"gpulib/gpu.h\"\n" + content)
+                      f.write("#include \"psx/libgpu.h\"\n" + content)
           '
 
           sed -i 's/(int)vsync_callback/(uintptr_t)vsync_callback/g' PsyCross/src/psx/LIBETC.C
@@ -88,9 +87,10 @@ jobs:
           export AR=$NDK_BIN/llvm-ar
 
           SDL_ABS_PATH="$(pwd)/../temp_sdl/include"
+          PSYCROSS_INC_PATH="$(pwd)/../PsyCross/include"
 
-          sed -i "s|INCLUDES +=|INCLUDES += -I${SDL_ABS_PATH} -I/usr/include/SDL2|g" PsyCross.make
-          sed -i "s|INCLUDES +=|INCLUDES += -I${SDL_ABS_PATH} -I/usr/include/SDL2|g" REDRIVER2.make
+          sed -i "s|INCLUDES +=|INCLUDES += -I${SDL_ABS_PATH} -I${PSYCROSS_INC_PATH} -I/usr/include/SDL2|g" PsyCross.make
+          sed -i "s|INCLUDES +=|INCLUDES += -I${SDL_ABS_PATH} -I${PSYCROSS_INC_PATH} -I/usr/include/SDL2|g" REDRIVER2.make
 
           FLAGS="-DPSX_LONG_IS_INT -DPSY_CROSS_LONG_IS_INT -D__ANDROID__ -fpack-struct=4 -Wno-int-to-pointer-cast -Wno-pointer-to-int-cast -Wno-implicit-function-declaration -Wno-error"
 
