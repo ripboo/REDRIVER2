@@ -41,35 +41,35 @@ jobs:
         # 1. جلب مكتبة SDL2 headers
         git clone https://github.com/libsdl-org/SDL.git -b SDL2 --depth 1 temp_sdl
         
-        # 2. تعديل premake5.lua الأساسي
+        # 2. تعديل premake5.lua الأساسي للأندرويد
         sed -i 's/IS_ANDROID = (_ACTION == "androidndk")/IS_ANDROID = true/g' premake5.lua
         sed -i '/shortcommands/d' premake5.lua
         sed -i '/-mfloat-abi=softfp/d' premake5.lua
         sed -i '/-mfpu=neon/d' premake5.lua
         sed -i 's/if os.target() ~= "emscripten" then/if os.target() ~= "emscripten" and not IS_ANDROID then/g' premake5.lua
-        
-        # 3. حقن تعاريف أحجام الـ Types لمعمارية ARM64
-        sed -i '/defines { GAME_REGION }/a \    defines { "PSX_LONG_IS_INT", "__ANDROID__", "PSY_CROSS_LONG_IS_INT" }' premake5_psycross.lua
-        sed -i '/defines { VERSION }/a \    defines { "PSX_LONG_IS_INT", "__ANDROID__", "PSY_CROSS_LONG_IS_INT" }' premake5.lua
 
-        # 4. توليد ملفات Make
+        # 3. توليد ملفات Make عبر Premake
         premake5 gmake2 --os=android
         
         cd build
         
-        # 5. إعداد أدوات NDK
+        # 4. إعداد أدوات NDK لمعمارية ARM64
         NDK_BIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
         export CC=$NDK_BIN/aarch64-linux-android21-clang
         export CXX=$NDK_BIN/aarch64-linux-android21-clang++
         export AR=$NDK_BIN/llvm-ar
         
-        # 6. إجبار PsyCross.make على قراءة مسارات SDL2 وحل مشاكل Pointers
+        # 5. حقن مسارات SDL2 والتعريف الحاسمي (PSX_LONG_IS_INT) مباشرة داخل الـ Makefiles
         SDL_ABS_PATH="$(pwd)/../temp_sdl/include"
+        
         sed -i "s|INCLUDES +=|INCLUDES += -I${SDL_ABS_PATH} -I/usr/include/SDL2|g" PsyCross.make
         sed -i "s|INCLUDES +=|INCLUDES += -I${SDL_ABS_PATH} -I/usr/include/SDL2|g" REDRIVER2.make
-        sed -i 's/ALL_CFLAGS +=/ALL_CFLAGS += -Wno-error=int-to-pointer-cast -Wno-error=pointer-to-int-cast -Wno-int-to-pointer-cast -Wno-pointer-to-int-cast -Wno-implicit-function-declaration /g' PsyCross.make
         
-        # 7. التجميع
+        # حقن التعريف الجوهري لحل مشكلة static_assert ومشاكل الـ Pointer Casts
+        sed -i 's/ALL_CFLAGS +=/ALL_CFLAGS += -DPSX_LONG_IS_INT -DPSY_CROSS_LONG_IS_INT -D__ANDROID__ -Wno-error=int-to-pointer-cast -Wno-error=pointer-to-int-cast -Wno-int-to-pointer-cast -Wno-pointer-to-int-cast -Wno-implicit-function-declaration /g' PsyCross.make
+        sed -i 's/ALL_CFLAGS +=/ALL_CFLAGS += -DPSX_LONG_IS_INT -DPSY_CROSS_LONG_IS_INT -D__ANDROID__ /g' REDRIVER2.make
+        
+        # 6. تنفيذ التجميع
         make PsyCross config=release_android-arm64 -j$(nproc)
         make REDRIVER2 config=release_android-arm64 -j$(nproc)
 
