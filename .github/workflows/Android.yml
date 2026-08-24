@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. جلب المستودع مع جلب المجلدات الفرعية (Submodules) بشكل كامل
+    # 1. جلب المستودع والموديلات الفرعية بالكامل
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
@@ -34,29 +34,41 @@ jobs:
         tar -xvf premake-5.0.0-beta2-linux.tar.gz
         sudo mv premake5 /usr/local/bin/
 
-    # 4. التحقق من مجلد PsyCross وتطبيق الإصلاحات والبناء
-    - name: Ensure PsyCross & Build ARMv8
+    # 4. معالجة وتصحيح الكود التلقائي للبناء
+    - name: Patch Source Code & Build ARMv8
       run: |
-        # التأكد من تحديث وجلب المجلد الفرعي PsyCross إذا كان فارغاً
         git submodule update --init --recursive
-        
         cd src_rebuild
 
-        # --- [إصلاحات كود PsyCross ليتوافق مع ARM64] ---
-        # إضافة الترويسات الناقصة
-        sed -i '1i #include "gpulib/gpu.h"' PsyCross/src/psx/LIBCD.C
-        sed -i '1i #include <stdint.h>' PsyCross/src/psx/LIBETC.C
-
-        # تصحيح تحويل المؤشرات في LIBETC.C لتوافق 64-bit
+        # --- [إصلاح تحويل المؤشرات والمكتبات الناقصة] ---
         sed -i 's/(int)vsync_callback/(uintptr_t)vsync_callback/g' PsyCross/src/psx/LIBETC.C
+        
+        # إضافة Include لتعريف uintptr_t و eprint
+        python3 -c '
+path = "PsyCross/src/psx/LIBETC.C"
+with open(path, "r") as f: content = f.read()
+if "#include <stdint.h>" not in content:
+    with open(path, "w") as f: f.write("#include <stdint.h>\n" + content)
 
-        # ضبط حزم الهياكل (Structures Packing) لتتطابق مع توقعات PSX وتتجاوز أخطاء static_assert
-        sed -i 's/typedef struct/typedef struct __attribute__((packed))/g' PsyCross/include/psx/libgpu.h
+path2 = "PsyCross/src/psx/LIBCD.C"
+with open(path2, "r") as f: content2 = f.read()
+if "gpu.h" not in content2:
+    with open(path2, "w") as f: f.write("#include \"gpulib/gpu.h\"\n" + content2)
+'
 
-        # --- جلب SDL2 headers ---
+        # --- [تعديل struct Packing في libgpu.h عبر Python لضمان الشمولية] ---
+        python3 -c '
+path = "PsyCross/include/psx/libgpu.h"
+with open(path, "r") as f: text = f.read()
+text = text.replace("typedef struct {", "typedef struct __attribute__((packed)) {")
+text = text.replace("typedef struct struct_", "typedef struct __attribute__((packed)) struct_")
+with open(path, "w") as f: f.write(text)
+'
+
+        # --- [جلب SDL2 headers] ---
         git clone https://github.com/libsdl-org/SDL.git -b SDL2 --depth 1 temp_sdl
 
-        # --- إعداد Premake ---
+        # --- [إعداد Premake] ---
         sed -i 's/IS_ANDROID = (_ACTION == "androidndk")/IS_ANDROID = true/g' premake5.lua
         sed -i '/shortcommands/d' premake5.lua
         sed -i '/-mfloat-abi=softfp/d' premake5.lua
@@ -67,7 +79,7 @@ jobs:
 
         cd build
 
-        # --- إعداد بيئة NDK ---
+        # --- [إعداد أدوات NDK للمعمارية ARM64] ---
         NDK_BIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin
         export CC=$NDK_BIN/aarch64-linux-android21-clang
         export CXX=$NDK_BIN/aarch64-linux-android21-clang++
@@ -75,20 +87,20 @@ jobs:
 
         SDL_ABS_PATH="$(pwd)/../temp_sdl/include"
 
-        # حقن المسارات والرافعات البرمجية
         sed -i "s|INCLUDES +=|INCLUDES += -I${SDL_ABS_PATH} -I/usr/include/SDL2|g" PsyCross.make
         sed -i "s|INCLUDES +=|INCLUDES += -I${SDL_ABS_PATH} -I/usr/include/SDL2|g" REDRIVER2.make
 
-        FLAGS="-DPSX_LONG_IS_INT -DPSY_CROSS_LONG_IS_INT -D__ANDROID__ -Wno-int-to-pointer-cast -Wno-pointer-to-int-cast -Wno-implicit-function-declaration -Wno-error"
+        # [أهم خيارات لتجاوز أخطاء الحشوة والأحجام]
+        FLAGS="-DPSX_LONG_IS_INT -DPSY_CROSS_LONG_IS_INT -D__ANDROID__ -fpack-struct=1 -Wno-int-to-pointer-cast -Wno-pointer-to-int-cast -Wno-implicit-function-declaration -Wno-error"
 
         sed -i "s/ALL_CFLAGS +=/ALL_CFLAGS += ${FLAGS} /g" PsyCross.make
         sed -i "s/ALL_CFLAGS +=/ALL_CFLAGS += ${FLAGS} /g" REDRIVER2.make
 
-        # --- تنفيذ البناء ---
+        # --- [بدء البناء] ---
         make PsyCross config=release_android-arm64 -j$(nproc)
         make REDRIVER2 config=release_android-arm64 -j$(nproc)
 
-    # 5. رفع النواتج
+    # 5. رفع الملفات الناتجة
     - name: Upload ARMv8 Artifacts
       uses: actions/upload-artifact@v4
       with:
